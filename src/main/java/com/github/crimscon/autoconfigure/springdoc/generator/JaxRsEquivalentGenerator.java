@@ -4,14 +4,11 @@ import org.springframework.core.MethodParameter;
 import org.springframework.core.annotation.AnnotationUtils;
 import org.springframework.util.ReflectionUtils;
 
-import java.lang.annotation.Annotation;
-import java.util.HashMap;
-import java.util.Map;
-import java.util.Objects;
-import java.util.Optional;
-import java.util.concurrent.atomic.AtomicReference;
-import java.util.stream.Stream;
 import javax.ws.rs.DefaultValue;
+import java.lang.annotation.Annotation;
+import java.util.*;
+import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.Predicate;
 
 public class JaxRsEquivalentGenerator {
 
@@ -26,14 +23,20 @@ public class JaxRsEquivalentGenerator {
         private static final String EXIST_ANNOTATION_FIELD_NAME = "combinedAnnotations";
 
         private final MethodParameter[] methodParameters;
-        private final Map<Class<? extends Annotation>, Class<? extends Annotation>> equivalenceMap = new HashMap<>();
+        private final Map<Class<? extends Annotation>, Class<? extends Annotation>> equivalences = new HashMap<>();
+        private final Map<Class<? extends Annotation>, Predicate<MethodParameter>> conditionalAdditional = new HashMap<>();
 
         public Generator(MethodParameter[] methodParameters) {
             this.methodParameters = methodParameters;
         }
 
         public Generator equivalent(Class<? extends Annotation> jerseyAnnotation, Class<? extends Annotation> springAnnotation) {
-            equivalenceMap.put(jerseyAnnotation, springAnnotation);
+            equivalences.put(jerseyAnnotation, springAnnotation);
+            return this;
+        }
+
+        public Generator additionalForEmptyMethodParameter(Class<? extends Annotation> annotationClass, Predicate<MethodParameter> condition) {
+            conditionalAdditional.put(annotationClass, condition);
             return this;
         }
 
@@ -60,14 +63,43 @@ public class JaxRsEquivalentGenerator {
         }
 
         private Annotation[] fillAnnotationArray(MethodParameter methodParameter, Annotation[] existAnnotations) {
-            return Stream.concat(
-                            Stream.of(existAnnotations)
-                                    .filter(this::isContainsInSimilarAnnotationsMap)
-                                    .map(annotation -> synthesizeAnnotation(methodParameter, annotation))
-                                    .filter(Objects::nonNull),
-                            Stream.of(existAnnotations))
-                    .toArray(Annotation[]::new);
+            Set<Annotation> annotations = new HashSet<>(additionalAnnotations(methodParameter));
+
+            for (Annotation existAnnotation : existAnnotations) {
+                annotations.add(existAnnotation);
+                if (isContainsInSimilarAnnotationsMap(existAnnotation)) {
+                    var synthesizeAnnotation = synthesizeAnnotation(methodParameter, existAnnotation);
+                    annotations.add(synthesizeAnnotation);
+                }
+            }
+
+            return annotations.toArray(Annotation[]::new);
         }
+
+        private Set<Annotation> additionalAnnotations(MethodParameter methodParameter) {
+            boolean isEmptyParameter = equivalences
+                    .keySet()
+                    .stream()
+                    .noneMatch(methodParameter::hasParameterAnnotation);
+
+            if (isEmptyParameter) {
+                Set<Annotation> addedAnnotation = new HashSet<>();
+
+                conditionalAdditional
+                        .forEach((additionalAnnotation, condition) -> {
+                            if (condition.test(methodParameter)) {
+                                addedAnnotation.add(
+                                        AnnotationUtils.synthesizeAnnotation(Map.of(), additionalAnnotation, methodParameter.getParameter())
+                                );
+                            }
+                        });
+
+                return addedAnnotation;
+            }
+
+            return Set.of();
+        }
+
 
         private Annotation synthesizeAnnotation(MethodParameter methodParameter, Annotation annotation) {
             Map<String, Object> attributes = new HashMap<>();
@@ -89,7 +121,7 @@ public class JaxRsEquivalentGenerator {
         }
 
         private Optional<? extends Class<? extends Annotation>> findSimilarAnnotationClass(Annotation annotation) {
-            return equivalenceMap.entrySet()
+            return equivalences.entrySet()
                     .stream()
                     .filter(entry -> entry.getKey().isInstance(annotation))
                     .map(Map.Entry::getValue)
