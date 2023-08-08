@@ -1,42 +1,28 @@
 package com.github.crimscon.autoconfigure.springdoc.model;
 
-import com.github.crimscon.autoconfigure.springdoc.generator.JaxRsEquivalentGenerator;
 
+import com.github.crimscon.autoconfigure.springdoc.generator.JaxRsEquivalentGenerator;
 import org.springframework.beans.factory.BeanFactory;
 import org.springframework.core.MethodParameter;
+import org.springframework.core.annotation.AnnotationUtils;
 import org.springframework.lang.NonNull;
-import org.springframework.web.bind.annotation.CookieValue;
-import org.springframework.web.bind.annotation.MatrixVariable;
-import org.springframework.web.bind.annotation.PathVariable;
-import org.springframework.web.bind.annotation.RequestHeader;
-import org.springframework.web.bind.annotation.RequestParam;
+import org.springframework.web.bind.annotation.*;
 import org.springframework.web.method.HandlerMethod;
 
+import javax.ws.rs.*;
 import java.lang.reflect.Method;
-import javax.ws.rs.CookieParam;
-import javax.ws.rs.FormParam;
-import javax.ws.rs.HeaderParam;
-import javax.ws.rs.MatrixParam;
-import javax.ws.rs.PathParam;
-import javax.ws.rs.QueryParam;
+import java.util.Optional;
+import java.util.Set;
+
+import static javax.ws.rs.HttpMethod.*;
 
 public class JaxRsHandlerMethod extends HandlerMethod {
-    private final Class<?> proxyBeanType;
+    private static final Set<String> REQUIRED_REQUEST_BODY_METHODS = Set.of(POST, PUT, PATCH);
 
     private MethodParameter[] methodParameters;
 
-    private boolean proxyEnabled;
-
-    @Override
-    @NonNull
-    public Class<?> getBeanType() {
-        return proxyBeanType != null && isProxyEnabled() ? proxyBeanType : super.getBeanType();
-    }
-
-    public JaxRsHandlerMethod(String beanName, BeanFactory beanFactory, Method method, Class<?> resourceClassWithResponseBody) {
+    public JaxRsHandlerMethod(String beanName, BeanFactory beanFactory, Method method) {
         super(beanName, beanFactory, method);
-        this.proxyBeanType = resourceClassWithResponseBody;
-        this.proxyEnabled = true;
     }
 
     @Override
@@ -51,21 +37,29 @@ public class JaxRsHandlerMethod extends HandlerMethod {
                     .equivalent(PathParam.class, PathVariable.class)
                     .equivalent(MatrixParam.class, MatrixVariable.class)
                     .equivalent(CookieParam.class, CookieValue.class)
+                    .additionalForEmptyMethodParameter(RequestBody.class, this::conditionToRequestBody)
                     .generate();
         }
 
         return this.methodParameters;
     }
 
-    public boolean isProxyEnabled() {
-        return proxyEnabled;
+    private boolean conditionToRequestBody(MethodParameter methodParameter) {
+        return Optional.ofNullable(methodParameter.getMethod())
+                .map(method -> AnnotationUtils.findAnnotation(method, HttpMethod.class))
+                .map(AnnotationUtils::getValue)
+                .map(String.class::cast)
+                .filter(REQUIRED_REQUEST_BODY_METHODS::contains)
+                .isPresent();
     }
 
-    public void disableProxy() {
-        this.proxyEnabled = false;
+    @Override
+    public boolean equals(Object other) {
+        return super.equals(other);
     }
 
-    public void enableProxy() {
-        this.proxyEnabled = true;
+    @Override
+    public int hashCode() {
+        return super.hashCode();
     }
 }
